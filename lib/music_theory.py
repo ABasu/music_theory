@@ -180,8 +180,8 @@ class Note(object):
         ----------
         fmt : TYPE, optional
             DESCRIPTION. The default is None.
-        note_fmt : TYPE, optional
-            DESCRIPTION. The default is None.
+        note_fmt : str, optional
+            A letter which is the preferred base of the note. The default is None.
 
         Returns
         -------
@@ -204,6 +204,7 @@ class Note(object):
                 if note_fmt is None:
                     note_name = note_name[0]
                 else:
+                    note_fmt = note_fmt[0]
                     note_idx = None
                     for idx, nn in enumerate(note_name):
                         if note_fmt.upper() == nn[0]:
@@ -227,6 +228,7 @@ class Note(object):
 class Scale(object):
     def __init__(self, tonic=None, stype='major'):
         scales = {
+            'chromatic': [0,1,2,3,4,5,6,7,8,9,10,11],
             'major': [0,2,4,5,7,9,11], 
             'minor': [0,2,3,5,7,8,10]}
         
@@ -238,41 +240,115 @@ class Scale(object):
         self.scale_offsets = scales[stype]
         self.notes = [Note(self.tonic+n, tonic=self.tonic, fmt='western') for n in self.scale_offsets]
         
-    def get(self, fmt='western'):
+    def get(self, fmt='western', note_fmt=True):
         # Return the list of Note() objects
         if fmt == 'notes':
             notes = self.notes
         # Otherise return a list of strings/numbers
         else:
-            notes = [n.get(fmt=fmt) for n in self.notes]
+            # If note_fmt is True, we will retrieve notes in alphabetical order
+            if note_fmt and fmt=='western':
+                notes = [self.tonic.get(fmt=fmt)]
+                for n in self.notes[1:]:
+                    # get next note letter
+                    note_char = chr(ord(notes[-1][0]) + 1)
+                    note_char = 'A' if note_char == 'H' else note_char
+                    notes.append(n.get(fmt=fmt, note_fmt=note_char))
+            else:
+                notes = [n.get(fmt=fmt) for n in self.notes]
         return(notes)
 
 class Piano(object):
     
-    def __init__(self, span=(0,12)):
+    def __init__(self, span=(0,11)):
         self.black = [1,3,6,8,10]        
-        self.span_start = span[0]
-        self.span_end = span[1]
+        self.start_key = Note(span[0], tonic='C').get(fmt='numeric')
+        self.end_key = Note(span[1], tonic='C').get(fmt='numeric')
         
-    def draw(self, notes):
-        if isinstance(notes, list):
-            if isinstance(notes[0], str):
-                notes = [Note(n) for n in notes]
-        elif isinstance(notes, Scale):
-            notes = notes.notes
-        notes = [n.get('numeric') for n in notes]
+    def draw(self, played=[]):
+        if (Note(self.start_key, tonic='C').get().strip(".'")) != 'C':
+            logging.error(f"Starting key needs to be C, not {Note(self.start_key, tonic='C').get()}")
+        if (Note(self.end_key, tonic='C').get().strip(".'")) != 'B':
+            logging.error(f"Ending key needs to be B, not {Note(self.end_key, tonic='C').get()}")
             
-        upper_row = ''
-        for key in range(self.span_start, self.span_end+1):
+        # Define colors
+        BLACK = '\033[40m'
+        WHITE = '\033[39m'
+        HIGHLIGHT =  '\033[41m'
+        HIGHLIGHT_BLACK = '\033[44m'
+        END = '\033[0m'
+        
+        # We need the tonic to avoid warnings for note labels
+        tonic = 'C'
+        
+        # Key widths, adjustable
+        w_width = 5
+        b_width = 3
+        
+        w_top_width_narrow = w_width - (int(b_width/2)*2) - 2
+        w_top_width_wide = w_width - int((b_width/2)+1)
+        
+        # Drawing chars. Black is just a solid block
+        w_v = '┃'
+        w_h = '━'
+        w_lc = '┗'
+        w_rc = '┛'
+        w_mc = '┻'
+        
+        # Color blocks for black or played key highlight
+        bkey = f'{BLACK} {END}'
+        wkey = f' '
+        pkey = f'{HIGHLIGHT} {END}'
+        pbkey = f'{HIGHLIGHT_BLACK} {END}'
+        
+        # The layers that make up the piano
+        top_label = ' '
+        upper = ''         # Portion with black keys
+        lower = ''         # Portion with just white keys before the labels
+        bottom_label = ''  # White key labels
+        bottom = f'{w_lc}' # Last line
 
-            if key % 12 in self.black:
-                upper_row += '┃'*3
-            else:
-                upper_row += ' │ '
+        played = [Note(p, tonic=tonic).get(fmt='numeric') for p in played]
+        
+        
+        for idx, key in enumerate(range(self.start_key, self.end_key+1)):
+            key_color = 'black' if Note(key, tonic='C').get().strip("'.")[-1]=="#" else 'white'
+            next_key_color = 'black' if (key+1)%12 in self.black else 'white'
+            prev_key_color = 'black' if idx!=0 and (key-1)%12 in self.black else 'white'
+            key_label_top = f"{Note(key, tonic=tonic).get():^{b_width+2}}"
+            key_label_bottom = f"{Note(key, tonic=tonic).get():{wkey}^{w_width}}"
+            
+            # black key
+            if key_color == 'black':
+                top_label += f"{key_label_top}"
+                upper += f"{(pbkey if key in played else bkey) * (b_width + 2)}"
+        
+            # Narrow white key
+            if key_color == 'white' and (next_key_color == 'black' and prev_key_color=='black'):
+                top_label += f"{wkey * w_top_width_narrow}"
+                upper += f"{(pkey if key in played else wkey) * w_top_width_narrow}"
                 
-        print(upper_row)
-        print(upper_row)
-        print(upper_row)
-        print(upper_row)
+            # Wide white key - following black
+            if key_color == 'white' and (next_key_color == 'white' and prev_key_color=='black'):
+                top_label += f"{wkey * w_top_width_wide} "
+                upper += f"{(pkey if key in played else wkey) * w_top_width_wide}"
+                
+            # Wide white key - leading to black
+            if key_color == 'white' and (next_key_color == 'black' and prev_key_color=='white'):
+                top_label += f"{' ' * w_top_width_wide}"
+                upper += f"{w_v}{(pkey if key in played else wkey) * w_top_width_wide}"
+                
+            if key_color == 'white':
+                lower += f"{w_v}{(pkey if key in played else wkey) * (w_width)}"
+                bottom_label += f"{wkey}{key_label_bottom}"
+                bottom += f"{w_h * (w_width)}{w_mc}"
             
-            
+        upper += f"{w_v}"
+        lower += f"{w_v}"
+        bottom = bottom[:-1]+f"{w_rc}"
+        
+        piano_keys = f"{top_label}\n{'\n'.join([upper]*5)}\n{'\n'.join([lower]*3)}\n{bottom}\n{bottom_label}"
+        
+        print(piano_keys)
+        
+        return
